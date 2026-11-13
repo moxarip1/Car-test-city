@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -33,14 +35,18 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Brightness2
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material.icons.filled.WbTwilight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -53,8 +59,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -71,10 +79,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.game.CameraMode
 import com.example.game.CarType
+import com.example.game.GameSettings
 import com.example.game.HudTelemetry
 import com.example.game.LUXURY_PAINT_PRESETS
 import com.example.game.PaintFinish
+import com.example.game.SpeedUnit
+import com.example.game.SteeringMode
 import com.example.game.StuntBannerType
+import com.example.game.TimeOfDay
 import com.example.ui.theme.BrakeCrimson
 import com.example.ui.theme.CairoFontFamily
 import com.example.ui.theme.DriftAmber
@@ -86,16 +98,20 @@ import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.OrbitronFontFamily
 import com.example.ui.theme.PearlText
 import com.example.ui.theme.SunsetGold
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.StateFlow
 
 @Composable
 fun GameHudOverlay(
     telemetryFlow: StateFlow<HudTelemetry>,
+    settingsFlow: StateFlow<GameSettings>,
     isFullscreenFlow: StateFlow<Boolean>,
+    onPauseGame: () -> Unit,
     onSelectCar: (CarType) -> Unit,
     onSelectPaint: (Int) -> Unit,
     onCycleFinish: () -> Unit,
     onCycleCamera: () -> Unit,
+    onCycleTimeOfDay: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onToggleMute: () -> Unit,
     onResetCar: () -> Unit,
@@ -103,16 +119,24 @@ fun GameHudOverlay(
     onTouchBrake: (Boolean) -> Unit,
     onTouchSteerLeft: (Boolean) -> Unit,
     onTouchSteerRight: (Boolean) -> Unit,
+    onTouchAnalogSteer: (Float) -> Unit,
     onTouchHandbrake: (Boolean) -> Unit,
+    onTouchNitro: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val telemetry by telemetryFlow.collectAsStateWithLifecycle()
+    val settings by settingsFlow.collectAsStateWithLifecycle()
     val isFullscreen by isFullscreenFlow.collectAsStateWithLifecycle()
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val isCompactWidth = maxWidth < 740.dp
 
-        // Arabic RTL Top Bar + Speedometer & Drift Telemetry
+        // Immersive Nitro / High-Speed Edge Lines
+        if (telemetry.isNitroActive || telemetry.isBoosting || telemetry.speedKmh > 255) {
+            SpeedLinesOverlay(isNitro = telemetry.isNitroActive)
+        }
+
+        // Arabic RTL Top Bar + Speedometer, Stunt Banners & Mini-Map Radar
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             Box(
                 modifier = Modifier
@@ -128,12 +152,15 @@ fun GameHudOverlay(
                 ) {
                     TopBarRow(
                         telemetry = telemetry,
+                        showFps = settings.showFps,
                         isFullscreen = isFullscreen,
                         isCompact = isCompactWidth,
+                        onPauseGame = onPauseGame,
                         onSelectCar = onSelectCar,
                         onSelectPaint = onSelectPaint,
                         onCycleFinish = onCycleFinish,
                         onCycleCamera = onCycleCamera,
+                        onCycleTimeOfDay = onCycleTimeOfDay,
                         onToggleFullscreen = onToggleFullscreen,
                         onToggleMute = onToggleMute,
                         onResetCar = onResetCar
@@ -144,75 +171,100 @@ fun GameHudOverlay(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.Top
                     ) {
-                        SpeedometerCard(telemetry = telemetry)
+                        SpeedometerCard(telemetry = telemetry, speedUnit = settings.speedUnit)
 
-                        StuntEventBanner(bannerType = telemetry.bannerType)
+                        StuntEventBanner(telemetry = telemetry, speedUnit = settings.speedUnit)
 
-                        DriftScoreCard(telemetry = telemetry)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            DriftScoreCard(telemetry = telemetry)
+                            MiniMapRadar(
+                                carX = telemetry.carX,
+                                carZ = telemetry.carZ,
+                                carYaw = telemetry.carYaw,
+                                district = telemetry.district,
+                                radarSize = if (isCompactWidth) 78.dp else 94.dp
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // Ergonomic Landscape Bottom Pedals (Physical Left = Steering, Physical Right = Pedals)
+        // Ergonomic Landscape Bottom Pedals (Physical Left = Steering, Physical Right = Nitro + Drift + Brake + Gas)
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom
             ) {
-                // Bottom-Left: Large responsive Left & Right steering touch pads
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SteerTouchButton(
-                        icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                        contentDesc = stringResource(R.string.steer_left_desc),
-                        tag = "steer_left_button",
-                        size = if (isCompactWidth) 74.dp else 84.dp,
-                        onPressedChanged = onTouchSteerLeft
+                if (settings.steeringMode == SteeringMode.VIRTUAL_WHEEL) {
+                    VirtualSteeringWheel(
+                        size = if (isCompactWidth) 136.dp else 156.dp,
+                        onAnalogSteerChanged = onTouchAnalogSteer
                     )
-                    SteerTouchButton(
-                        icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDesc = stringResource(R.string.steer_right_desc),
-                        tag = "steer_right_button",
-                        size = if (isCompactWidth) 74.dp else 84.dp,
-                        onPressedChanged = onTouchSteerRight
-                    )
+                } else {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SteerTouchButton(
+                            icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                            contentDesc = stringResource(R.string.steer_left_desc),
+                            tag = "steer_left_button",
+                            size = if (isCompactWidth) 74.dp else 84.dp,
+                            onPressedChanged = onTouchSteerLeft
+                        )
+                        SteerTouchButton(
+                            icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDesc = stringResource(R.string.steer_right_desc),
+                            tag = "steer_right_button",
+                            size = if (isCompactWidth) 74.dp else 84.dp,
+                            onPressedChanged = onTouchSteerRight
+                        )
+                    }
                 }
 
-                // Bottom-Right: Handbrake (Drift), Brake/Reverse, and Gas Pedals
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.Bottom
                 ) {
+                    NitroPedalButton(
+                        label = stringResource(R.string.pedal_nitro),
+                        charge = telemetry.nitroCharge,
+                        isActive = telemetry.isNitroActive,
+                        width = if (isCompactWidth) 66.dp else 76.dp,
+                        height = if (isCompactWidth) 66.dp else 74.dp,
+                        onPressedChanged = onTouchNitro
+                    )
                     PedalTouchButton(
                         label = stringResource(R.string.pedal_drift),
                         accent = DriftAmber,
                         tag = "handbrake_pedal",
-                        width = if (isCompactWidth) 68.dp else 78.dp,
-                        height = if (isCompactWidth) 68.dp else 76.dp,
+                        width = if (isCompactWidth) 64.dp else 74.dp,
+                        height = if (isCompactWidth) 66.dp else 74.dp,
                         onPressedChanged = onTouchHandbrake
                     )
                     PedalTouchButton(
                         label = stringResource(R.string.pedal_brake),
                         accent = BrakeCrimson,
                         tag = "brake_pedal",
-                        width = if (isCompactWidth) 70.dp else 80.dp,
-                        height = if (isCompactWidth) 74.dp else 84.dp,
+                        width = if (isCompactWidth) 66.dp else 76.dp,
+                        height = if (isCompactWidth) 72.dp else 82.dp,
                         onPressedChanged = onTouchBrake
                     )
                     PedalTouchButton(
                         label = stringResource(R.string.pedal_gas),
                         accent = ElectricCyan,
                         tag = "gas_pedal",
-                        width = if (isCompactWidth) 78.dp else 90.dp,
-                        height = if (isCompactWidth) 90.dp else 104.dp,
+                        width = if (isCompactWidth) 74.dp else 86.dp,
+                        height = if (isCompactWidth) 88.dp else 102.dp,
                         onPressedChanged = onTouchGas
                     )
                 }
@@ -222,14 +274,34 @@ fun GameHudOverlay(
 }
 
 @Composable
+private fun SpeedLinesOverlay(isNitro: Boolean) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+        val lineCol = if (isNitro) ElectricCyan.copy(alpha = 0.28f) else SunsetGold.copy(alpha = 0.20f)
+        val stroke = if (isNitro) 3.dp.toPx() else 2.dp.toPx()
+        for (i in 0..7) {
+            val yRatio = (i + 0.5f) / 8f
+            val y = h * yRatio
+            val len = w * (0.06f + (i % 3) * 0.03f)
+            drawLine(lineCol, Offset(0f, y), Offset(len, y + (yRatio - 0.5f) * 28f), strokeWidth = stroke, cap = StrokeCap.Round)
+            drawLine(lineCol, Offset(w, y), Offset(w - len, y + (yRatio - 0.5f) * 28f), strokeWidth = stroke, cap = StrokeCap.Round)
+        }
+    }
+}
+
+@Composable
 private fun TopBarRow(
     telemetry: HudTelemetry,
+    showFps: Boolean,
     isFullscreen: Boolean,
     isCompact: Boolean,
+    onPauseGame: () -> Unit,
     onSelectCar: (CarType) -> Unit,
     onSelectPaint: (Int) -> Unit,
     onCycleFinish: () -> Unit,
     onCycleCamera: () -> Unit,
+    onCycleTimeOfDay: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onToggleMute: () -> Unit,
     onResetCar: () -> Unit
@@ -241,7 +313,32 @@ private fun TopBarRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 1. Live Car Switcher
+        GlassPillContainer {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ActionPillButton(
+                    icon = Icons.Default.Pause,
+                    label = stringResource(R.string.pause_button),
+                    accent = SunsetGold,
+                    tag = "pause_game_button",
+                    onClick = onPauseGame
+                )
+                if (showFps) {
+                    Text(
+                        text = "${telemetry.fps} ${stringResource(R.string.fps_label)}",
+                        color = ElectricCyan,
+                        fontFamily = OrbitronFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        modifier = Modifier
+                            .testTag("fps_counter_badge")
+                            .padding(horizontal = 4.dp)
+                    )
+                }
+            }
+        }
         GlassPillContainer {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -274,7 +371,6 @@ private fun TopBarRow(
             }
         }
 
-        // 2. Paint & Finish Picker (Glossy, Matte, Chrome)
         GlassPillContainer {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -325,12 +421,24 @@ private fun TopBarRow(
             }
         }
 
-        // 3. 4-Mode Camera, Fullscreen, Mute & Reset Car
         GlassPillContainer {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val (todIcon, todLabel, todAccent) = when (telemetry.timeOfDay) {
+                    TimeOfDay.SUNSET -> Triple(Icons.Default.WbTwilight, stringResource(R.string.tod_sunset), DriftAmber)
+                    TimeOfDay.DAY -> Triple(Icons.Default.WbSunny, stringResource(R.string.tod_day), SunsetGold)
+                    TimeOfDay.NIGHT -> Triple(Icons.Default.Brightness2, stringResource(R.string.tod_night), ElectricCyan)
+                }
+                ActionPillButton(
+                    icon = todIcon,
+                    label = todLabel,
+                    accent = todAccent,
+                    tag = "tod_toggle_button",
+                    onClick = onCycleTimeOfDay
+                )
+
                 val camLabel = when (telemetry.cameraMode) {
                     CameraMode.CHASE -> stringResource(R.string.cam_chase)
                     CameraMode.SIDE_ACTION -> stringResource(R.string.cam_side)
@@ -483,49 +591,103 @@ private fun ActionIconButton(
 }
 
 @Composable
-private fun SpeedometerCard(telemetry: HudTelemetry) {
+private fun SpeedometerCard(
+    telemetry: HudTelemetry,
+    speedUnit: SpeedUnit
+) {
+    val displaySpeed = if (speedUnit == SpeedUnit.MPH) {
+        (telemetry.speedKmh * 0.621371f).roundToInt()
+    } else {
+        telemetry.speedKmh
+    }
+    val unitLabel = stringResource(
+        if (speedUnit == SpeedUnit.MPH) R.string.speed_unit_mph else R.string.speed_unit_kmh
+    )
     val accent = when {
-        telemetry.isBoosting -> ElectricCyan
+        telemetry.isNitroActive || telemetry.isBoosting -> ElectricCyan
         telemetry.speedKmh > 220 -> SunsetGold
         else -> PearlText
     }
+    val rpmColor = when {
+        telemetry.rpmNormalized > 0.85f -> BrakeCrimson
+        telemetry.rpmNormalized > 0.62f -> DriftAmber
+        else -> ElectricCyan
+    }
+    val gearText = if (telemetry.gear == 0) "R" else "G${telemetry.gear}"
+
     Surface(
         color = ObsidianCard,
         shape = RoundedCornerShape(16.dp),
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (telemetry.isBoosting) ElectricCyan else HairlineBorder
+            if (telemetry.isNitroActive || telemetry.isBoosting) ElectricCyan else HairlineBorder
         ),
         modifier = Modifier.testTag("speedometer_card")
     ) {
-        Row(
+        Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(7.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Icon(
-                imageVector = Icons.Default.Speed,
-                contentDescription = null,
-                tint = SunsetGold,
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Speed,
+                    contentDescription = null,
+                    tint = SunsetGold,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .padding(bottom = 3.dp)
+                )
+                Text(
+                    text = displaySpeed.toString(),
+                    color = accent,
+                    fontFamily = OrbitronFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 27.sp
+                )
+                Text(
+                    text = unitLabel,
+                    color = MutedSlate,
+                    fontFamily = CairoFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(bottom = 3.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(rpmColor.copy(alpha = 0.22f))
+                        .border(1.dp, rpmColor.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = gearText,
+                        color = rpmColor,
+                        fontFamily = OrbitronFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            // Live 6-speed RPM Tachometer Bar
+            Box(
                 modifier = Modifier
-                    .size(18.dp)
-                    .padding(bottom = 3.dp)
-            )
-            Text(
-                text = telemetry.speedKmh.toString(),
-                color = accent,
-                fontFamily = OrbitronFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 28.sp
-            )
-            Text(
-                text = stringResource(R.string.speed_unit_kmh),
-                color = MutedSlate,
-                fontFamily = CairoFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(bottom = 3.dp)
-            )
+                    .width(142.dp)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.White.copy(alpha = 0.12f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(telemetry.rpmNormalized.coerceIn(0.05f, 1f))
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Brush.horizontalGradient(listOf(ElectricCyan, DriftAmber, rpmColor)))
+                )
+            }
         }
     }
 }
@@ -562,6 +724,26 @@ private fun DriftScoreCard(telemetry: HudTelemetry) {
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp
                 )
+            }
+            if (telemetry.bestTrapSpeedKmh > 0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.radar_speed_trap),
+                        color = MutedSlate,
+                        fontFamily = CairoFontFamily,
+                        fontSize = 10.sp
+                    )
+                    Text(
+                        text = "${telemetry.bestTrapSpeedKmh}",
+                        color = ElectricCyan,
+                        fontFamily = OrbitronFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
             }
             if (telemetry.activeDriftScore > 0 || telemetry.isDrifting) {
                 Spacer(modifier = Modifier.height(2.dp))
@@ -604,31 +786,67 @@ private fun DriftScoreCard(telemetry: HudTelemetry) {
 }
 
 @Composable
-private fun StuntEventBanner(bannerType: StuntBannerType) {
-    val text = when (bannerType) {
-        StuntBannerType.NONE -> null
+private fun StuntEventBanner(
+    telemetry: HudTelemetry,
+    speedUnit: SpeedUnit
+) {
+    val trapVal = if (speedUnit == SpeedUnit.MPH) {
+        (telemetry.lastTrapSpeedKmh * 0.621371f).roundToInt()
+    } else {
+        telemetry.lastTrapSpeedKmh
+    }
+    val unitStr = stringResource(
+        if (speedUnit == SpeedUnit.MPH) R.string.speed_unit_mph else R.string.speed_unit_kmh
+    )
+    val bannerText = when (telemetry.bannerType) {
+        StuntBannerType.NONE -> if (telemetry.inDriftZone && telemetry.isDrifting) {
+            stringResource(R.string.drift_zone_bonus)
+        } else null
         StuntBannerType.AIRTIME -> stringResource(R.string.stunt_airtime)
         StuntBannerType.HELIPAD_LANDING -> stringResource(R.string.stunt_helipad)
         StuntBannerType.TURBO_BOOST -> stringResource(R.string.stunt_boost)
+        StuntBannerType.BOOST_RING -> stringResource(R.string.stunt_ring)
+        StuntBannerType.SPEED_TRAP -> "${stringResource(R.string.radar_speed_trap)}: $trapVal $unitStr"
+        StuntBannerType.DRIFT_ZONE -> stringResource(R.string.drift_zone_bonus)
     }
     AnimatedVisibility(
-        visible = text != null,
+        visible = bannerText != null,
         enter = fadeIn() + scaleIn(),
         exit = fadeOut() + scaleOut()
     ) {
-        if (text != null) {
-            Surface(
-                color = SunsetGold.copy(alpha = 0.94f),
-                shape = RoundedCornerShape(18.dp)
+        if (bannerText != null) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Text(
-                    text = text,
-                    color = Color(0xFF0A0F1C),
-                    fontFamily = CairoFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
-                )
+                Surface(
+                    color = if (telemetry.bannerType == StuntBannerType.SPEED_TRAP) ElectricCyan else SunsetGold.copy(alpha = 0.95f),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Text(
+                        text = bannerText,
+                        color = Color(0xFF0A0F1C),
+                        fontFamily = CairoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                    )
+                }
+                if (telemetry.bannerType == StuntBannerType.SPEED_TRAP && telemetry.isNewRecord) {
+                    Surface(
+                        color = BrakeCrimson,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.new_record_badge),
+                            color = PearlText,
+                            fontFamily = CairoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -679,6 +897,73 @@ private fun SteerTouchButton(
 }
 
 @Composable
+private fun NitroPedalButton(
+    label: String,
+    charge: Float,
+    isActive: Boolean,
+    width: Dp,
+    height: Dp,
+    onPressedChanged: (Boolean) -> Unit
+) {
+    var pressed by remember { mutableStateOf(false) }
+    val ratio = (charge / 100f).coerceIn(0f, 1f)
+    val accent = if (isActive || pressed) Color(0xFF38BDF8) else ElectricCyan
+
+    Box(
+        modifier = Modifier
+            .size(width = width, height = height)
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (pressed || isActive) accent.copy(alpha = 0.36f) else ObsidianCard)
+            .border(1.5.dp, if (pressed || isActive) accent else accent.copy(alpha = 0.52f), RoundedCornerShape(18.dp))
+            .testTag("nitro_pedal")
+            .semantics { contentDescription = label }
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val anyDown = event.changes.any { it.pressed }
+                        if (anyDown != pressed) {
+                            pressed = anyDown
+                            onPressedChanged(anyDown)
+                        }
+                        event.changes.forEach { it.consume() }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+            modifier = Modifier.padding(horizontal = 8.dp)
+        ) {
+            Text(
+                text = label,
+                color = if (pressed || isActive) PearlText else accent,
+                fontFamily = CairoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.White.copy(alpha = 0.14f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(ratio)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(accent)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun PedalTouchButton(
     label: String,
     accent: Color,
@@ -722,7 +1007,7 @@ private fun PedalTouchButton(
             color = if (pressed) PearlText else accent,
             fontFamily = CairoFontFamily,
             fontWeight = FontWeight.Bold,
-            fontSize = 14.sp
+            fontSize = 13.sp
         )
     }
 }

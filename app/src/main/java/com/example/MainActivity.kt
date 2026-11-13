@@ -2,9 +2,13 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,9 +35,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.game.GameState
 import com.example.game.gl.GlTextureView
 import com.example.ui.GameHudOverlay
 import com.example.ui.GameViewModel
+import com.example.ui.PauseMenuOverlay
+import com.example.ui.SettingsModal
+import com.example.ui.ShowroomMenuOverlay
+import com.example.ui.SplashScreen
 import com.example.ui.theme.HypercarResortTheme
 
 class MainActivity : ComponentActivity() {
@@ -80,9 +89,25 @@ class MainActivity : ComponentActivity() {
 fun HypercarGameScreen(viewModel: GameViewModel) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val focusRequester = remember { FocusRequester() }
+    val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val records by viewModel.records.collectAsStateWithLifecycle()
+    val isSettingsOpen by viewModel.isSettingsOpen.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
+    }
+
+    BackHandler(
+        enabled = isSettingsOpen ||
+            telemetry.gameState == GameState.PAUSED ||
+            telemetry.gameState == GameState.PLAYING
+    ) {
+        when {
+            isSettingsOpen -> viewModel.closeSettings()
+            telemetry.gameState == GameState.PAUSED -> viewModel.resumeGame()
+            telemetry.gameState == GameState.PLAYING -> viewModel.pauseGame()
+        }
     }
 
     Box(
@@ -97,6 +122,16 @@ fun HypercarGameScreen(viewModel: GameViewModel) {
                     else -> return@onPreviewKeyEvent false
                 }
                 when (keyEvent.key) {
+                    Key.Escape -> {
+                        if (isDown) {
+                            when {
+                                isSettingsOpen -> viewModel.closeSettings()
+                                telemetry.gameState == GameState.PLAYING -> viewModel.pauseGame()
+                                telemetry.gameState == GameState.PAUSED -> viewModel.resumeGame()
+                            }
+                        }
+                        true
+                    }
                     Key.W, Key.DirectionUp -> {
                         viewModel.setKeyGas(isDown); true
                     }
@@ -112,8 +147,15 @@ fun HypercarGameScreen(viewModel: GameViewModel) {
                     Key.Spacebar -> {
                         viewModel.setKeyHandbrake(isDown); true
                     }
+                    Key.N, Key.ShiftLeft, Key.ShiftRight -> {
+                        viewModel.setKeyNitro(isDown); true
+                    }
                     Key.C -> {
                         if (isDown) viewModel.cycleCameraMode()
+                        true
+                    }
+                    Key.T -> {
+                        if (isDown) viewModel.cycleTimeOfDay()
                         true
                     }
                     Key.F -> {
@@ -157,21 +199,74 @@ fun HypercarGameScreen(viewModel: GameViewModel) {
             }
         }
 
-        GameHudOverlay(
-            telemetryFlow = viewModel.telemetry,
-            isFullscreenFlow = viewModel.isFullscreen,
-            onSelectCar = viewModel::selectCar,
-            onSelectPaint = viewModel::selectPaintColor,
-            onCycleFinish = viewModel::cyclePaintFinish,
-            onCycleCamera = viewModel::cycleCameraMode,
-            onToggleFullscreen = viewModel::toggleFullscreen,
-            onToggleMute = viewModel::toggleMute,
-            onResetCar = viewModel::resetCar,
-            onTouchGas = viewModel::setTouchGas,
-            onTouchBrake = viewModel::setTouchBrake,
-            onTouchSteerLeft = viewModel::setTouchSteerLeft,
-            onTouchSteerRight = viewModel::setTouchSteerRight,
-            onTouchHandbrake = viewModel::setTouchHandbrake
-        )
+        when (telemetry.gameState) {
+            GameState.SPLASH -> {
+                SplashScreen(onFinished = viewModel::finishSplash)
+            }
+
+            GameState.MENU -> {
+                ShowroomMenuOverlay(
+                    telemetry = telemetry,
+                    settings = settings,
+                    records = records,
+                    onLaunchGame = viewModel::launchGame,
+                    onSelectCar = viewModel::selectCar,
+                    onSelectPaint = viewModel::selectPaintColor,
+                    onCycleFinish = viewModel::cyclePaintFinish,
+                    onCycleTimeOfDay = viewModel::cycleTimeOfDay,
+                    onOpenSettings = viewModel::openSettings
+                )
+            }
+
+            GameState.PLAYING, GameState.PAUSED -> {
+                GameHudOverlay(
+                    telemetryFlow = viewModel.telemetry,
+                    settingsFlow = viewModel.settings,
+                    isFullscreenFlow = viewModel.isFullscreen,
+                    onPauseGame = viewModel::pauseGame,
+                    onSelectCar = viewModel::selectCar,
+                    onSelectPaint = viewModel::selectPaintColor,
+                    onCycleFinish = viewModel::cyclePaintFinish,
+                    onCycleCamera = viewModel::cycleCameraMode,
+                    onCycleTimeOfDay = viewModel::cycleTimeOfDay,
+                    onToggleFullscreen = viewModel::toggleFullscreen,
+                    onToggleMute = viewModel::toggleMute,
+                    onResetCar = viewModel::resetCar,
+                    onTouchGas = viewModel::setTouchGas,
+                    onTouchBrake = viewModel::setTouchBrake,
+                    onTouchSteerLeft = viewModel::setTouchSteerLeft,
+                    onTouchSteerRight = viewModel::setTouchSteerRight,
+                    onTouchAnalogSteer = viewModel::setTouchAnalogSteer,
+                    onTouchHandbrake = viewModel::setTouchHandbrake,
+                    onTouchNitro = viewModel::setTouchNitro
+                )
+
+                AnimatedVisibility(
+                    visible = telemetry.gameState == GameState.PAUSED && !isSettingsOpen,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    PauseMenuOverlay(
+                        onResume = viewModel::resumeGame,
+                        onResetCar = viewModel::resetCar,
+                        onTeleport = viewModel::teleportTo,
+                        onOpenSettings = viewModel::openSettings,
+                        onExitToMenu = viewModel::exitToMenu
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = isSettingsOpen,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            SettingsModal(
+                settings = settings,
+                onUpdateSettings = viewModel::updateSettings,
+                onClose = viewModel::closeSettings
+            )
+        }
     }
 }

@@ -1,11 +1,24 @@
 <resources>
     <string name="app_name">Hypercar Resort</string>
+    <string name="app_title_ar">منتجع السيارات الخارقة 3D</string>
+    <string name="app_subtitle_ar">تجربة القيادة الحرة والاستعراض الفاخرة</string>
+    <string name="loading_assets_ar">جاري تهيئة المدينة ومحرك الصوت...</string>
+
     <string name="speed_unit_kmh">كم/س</string>
+    <string name="speed_unit_mph">ميل/س</string>
     <string name="drift_score_label">نقاط الانجراف</string>
     <string name="total_score_label">المجموع</string>
+    <string name="best_drift_label">أعلى دريفت</string>
+    <string name="top_speed_label">أقصى سرعة</string>
+    <string name="fps_label">FPS</string>
+
     <string name="car_ev_hyper_gt">EV Hyper-GT</string>
     <string name="car_v12_apex">V12 Apex</string>
     <string name="car_vip_coupe">VIP Coupe</string>
+    <string name="stat_top_speed">السرعة القصوى</string>
+    <string name="stat_acceleration">التسارع</string>
+    <string name="stat_drift_control">الدريفت والتحكم</string>
+
     <string name="finish_glossy">لامع</string>
     <string name="finish_matte">مطفي</string>
     <string name="finish_chrome">كروم</string>
@@ -13,6 +26,66 @@
     <string name="cam_side">جانبية</string>
     <string name="cam_hood">الغطاء</string>
     <string name="cam_orbit">مدار</string>
+    <string name="tod_sunset">غروب</string>
+    <string name="tod_day">نهار</string>
+    <string name="tod_night">ليل نيون</string>
+
+    <string name="district_downtown">وسط المدينة</string>
+    <string name="district_marina">المارينا</string>
+    <string name="district_canyon">تلال الانجراف</string>
+    <string name="district_airport">المطار والحلبة</string>
+
+    <string name="spawn_downtown">وسط المدينة والأبراج</string>
+    <string name="spawn_marina">الكورنيش الساحلي</string>
+    <string name="spawn_canyon">جبل الدريفت المتعرج</string>
+    <string name="spawn_airport">المطار ومنصة القفزات</string>
+    <string name="spawn_choose_title">اختر نقطة الانطلاق</string>
+
+    <string name="menu_play">ابدأ القيادة</string>
+    <string name="menu_garage">المرآب</string>
+    <string name="menu_settings">الإعدادات</string>
+    <string name="menu_back">رجوع</string>
+    <string name="menu_close">إغلاق</string>
+
+    <string name="pause_button">إيقاف مؤقت</string>
+    <string name="pause_title">توقف مؤقت</string>
+    <string name="pause_resume">استئناف اللعب</string>
+    <string name="pause_reset">إعادة ضبط السيارة</string>
+    <string name="pause_teleport_title">الانتقال السريع</string>
+    <string name="pause_settings">الإعدادات</string>
+    <string name="pause_main_menu">القائمة الرئيسية</string>
+
+    <string name="settings_title">الإعدادات</string>
+    <string name="settings_tab_graphics">الغرافيك والوضوح</string>
+    <string name="settings_tab_audio">الصوت</string>
+    <string name="settings_tab_controls">التحكم واللعب</string>
+
+    <string name="graphics_preset_label">جودة الغرافيك</string>
+    <string name="preset_low">منخفض (Low)</string>
+    <string name="preset_medium">متوسط (Medium)</string>
+    <string name="preset_high">عالي (High)</string>
+    <string name="preset_ultra">فائق (Ultra)</string>
+
+    <string name="resolution_label">دقة الوضوح (DPR)</string>
+    <string name="res_50">50% (أداء)</string>
+    <string name="res_75">75% (متوازن)</string>
+    <string name="res_100">100% (عالي)</string>
+    <string name="res_native">فائق (Native)</string>
+    <string name="show_fps_label">عداد الإطارات (FPS)</string>
+
+    <string name="audio_master">الصوت العام</string>
+    <string name="audio_engine">صوت المحرك والعادم</string>
+    <string name="audio_sfx">المؤثرات والإطارات</string>
+    <string name="audio_mute_all">كتم كل الأصوات</string>
+
+    <string name="steering_mode_label">نمط التوجيه</string>
+    <string name="steer_mode_buttons">أزرار لمس</string>
+    <string name="steer_mode_wheel">مقود افتراضي</string>
+    <string name="steering_sensitivity_label">حساسية التوجيه</string>
+    <string name="drift_assist_label">مساعدة الدريفت الذكية</string>
+    <string name="speed_unit_label">وحدة السرعة</string>
+    <string name="virtual_wheel_desc">مقود القيادة الافتراضي</string>
+
     <string name="action_reset_car">إعادة</string>
     <string name="action_fullscreen">ملء الشاشة</string>
     <string name="action_exit_fullscreen">خروج من الملء</string>
@@ -21,9 +94,14 @@
     <string name="pedal_gas">تسارع</string>
     <string name="pedal_brake">فرامل</string>
     <string name="pedal_drift">انجراف</string>
+    <string name="pedal_nitro">نيترو</string>
     <string name="steer_left_desc">انعطاف لليسار</string>
     <string name="steer_right_desc">انعطاف لليمين</string>
     <string name="stunt_airtime">قفزة جوية!</string>
     <string name="stunt_helipad">هبوط المهبط +5000</string>
     <string name="stunt_boost">نفق التوربو!</string>
+    <string name="stunt_ring">حلقة التوربو +1500</string>
+    <string name="radar_speed_trap">رادار السرعة</string>
+    <string name="new_record_badge">رقم قياسي جديد!</string>
+    <string name="drift_zone_bonus">منطقة انجراف x2!</string>
 </resources>

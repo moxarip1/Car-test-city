@@ -5,10 +5,12 @@ import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import com.example.game.CarAudioEngine
 import com.example.game.CarType
+import com.example.game.GameState
 import com.example.game.GameWorldPhysics
 import com.example.game.HudTelemetry
 import com.example.game.LUXURY_PAINT_PRESETS
 import com.example.game.SharedGameInput
+import com.example.game.TimeOfDay
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -25,15 +27,16 @@ class HypercarGlRenderer(
     private val onTelemetryUpdate: (HudTelemetry) -> Unit
 ) : GLSurfaceView.Renderer {
 
-    private val physics = GameWorldPhysics(audioEngine)
+    private val physics = GameWorldPhysics(audioEngine, initialState = GameState.SPLASH)
     private val commandQueue = ConcurrentLinkedQueue<() -> Unit>()
 
     private var lastFrameNanos = 0L
     private var hudPostAccum = 0f
+    private var fpsFrameCount = 0
+    private var fpsTimerAccum = 0f
     private var viewWidth = 1280
     private var viewHeight = 720
 
-    // Shader programs
     private var shadowProg = 0
     private var instancedShadowProg = 0
     private var skyProg = 0
@@ -42,7 +45,6 @@ class HypercarGlRenderer(
     private var instancedWorldProg = 0
     private var particleProg = 0
 
-    // Cached uniform handles
     private class WorldUniforms(prog: Int) {
         val uShadowMap = GLES30.glGetUniformLocation(prog, "uShadowMap")
         val uAsphaltTex = GLES30.glGetUniformLocation(prog, "uAsphaltTex")
@@ -52,6 +54,19 @@ class HypercarGlRenderer(
         val uCamPos = GLES30.glGetUniformLocation(prog, "uCamPos")
         val uSunDir = GLES30.glGetUniformLocation(prog, "uSunDir")
         val uTime = GLES30.glGetUniformLocation(prog, "uTime")
+        val uSkyHorizon = GLES30.glGetUniformLocation(prog, "uSkyHorizon")
+        val uSkyZenith = GLES30.glGetUniformLocation(prog, "uSkyZenith")
+        val uSunCol = GLES30.glGetUniformLocation(prog, "uSunCol")
+        val uFogColor = GLES30.glGetUniformLocation(prog, "uFogColor")
+        val uFogDensity = GLES30.glGetUniformLocation(prog, "uFogDensity")
+        val uShadowEnabled = GLES30.glGetUniformLocation(prog, "uShadowEnabled")
+        val uShadowTexel = GLES30.glGetUniformLocation(prog, "uShadowTexel")
+        val uReflectionsEnabled = GLES30.glGetUniformLocation(prog, "uReflectionsEnabled")
+        val uAmbientScale = GLES30.glGetUniformLocation(prog, "uAmbientScale")
+        val uNightFactor = GLES30.glGetUniformLocation(prog, "uNightFactor")
+        val uCarPos = GLES30.glGetUniformLocation(prog, "uCarPos")
+        val uCarFwd = GLES30.glGetUniformLocation(prog, "uCarFwd")
+        val uHeadlightOn = GLES30.glGetUniformLocation(prog, "uHeadlightOn")
         val uPaintColor = GLES30.glGetUniformLocation(prog, "uPaintColor")
         val uPaintRoughness = GLES30.glGetUniformLocation(prog, "uPaintRoughness")
         val uPaintMetalness = GLES30.glGetUniformLocation(prog, "uPaintMetalness")
@@ -72,24 +87,38 @@ class HypercarGlRenderer(
     private var uInstShadowLightVp = -1
     private var uSkyViewProj = -1
     private var uSkySunDir = -1
+    private var uSkyHorizon = -1
+    private var uSkyMid = -1
+    private var uSkyZenith = -1
+    private var uSkySunCol = -1
+    private var uSkyNight = -1
     private var uOceanWaterTex = -1
     private var uOceanViewProj = -1
     private var uOceanCamPos = -1
     private var uOceanSunDir = -1
+    private var uOceanSkyHorizon = -1
+    private var uOceanSkyZenith = -1
+    private var uOceanSunCol = -1
+    private var uOceanFogCol = -1
+    private var uOceanFogDensity = -1
+    private var uOceanNight = -1
     private var uOceanTime = -1
     private var uParticleViewProj = -1
 
-    // Shadow map FBO (1024x1024 fast soft PCF)
     private var shadowFbo = 0
     private var shadowDepthTex = 0
-    private val shadowRes = 1024
+    private var currentShadowRes = 1024
 
-    // Procedural Textures & Meshes
+    private var sceneFbo = 0
+    private var sceneColorTex = 0
+    private var sceneDepthRbo = 0
+    private var sceneW = 0
+    private var sceneH = 0
+
     private lateinit var textures: ProceduralTextures
     private lateinit var worldMeshes: WorldMeshes
     private lateinit var carMeshes: Map<CarType, CarMeshSet>
 
-    // Dynamic particle/skid/halo buffer: pos(3) + rgba(4) + uv(2) = 9 floats
     private val maxDynFloats = 4096 * 9
     private val dynData = FloatArray(maxDynFloats)
     private val dynFloatBuf: FloatBuffer = ByteBuffer.allocateDirect(maxDynFloats * 4)
@@ -98,7 +127,6 @@ class HypercarGlRenderer(
     private var dynVao = 0
     private var dynVbo = 0
 
-    // Matrices
     private val projMat = FloatArray(16)
     private val viewMat = FloatArray(16)
     private val viewProjMat = FloatArray(16)
@@ -111,8 +139,15 @@ class HypercarGlRenderer(
     private val modelMat = FloatArray(16)
     private val wheelMat = FloatArray(16)
 
-    // Golden-hour sunset sun direction
+    // Lighting parameters resolved each frame from TimeOfDay
     private val sunDir = floatArrayOf(-0.62f, 0.34f, 0.70f)
+    private val skyHorizon = floatArrayOf(1.0f, 0.54f, 0.24f)
+    private val skyMid = floatArrayOf(0.46f, 0.23f, 0.42f)
+    private val skyZenith = floatArrayOf(0.05f, 0.09f, 0.24f)
+    private val sunCol = floatArrayOf(1.0f, 0.78f, 0.50f)
+    private val fogCol = floatArrayOf(0.95f, 0.56f, 0.34f)
+    private var ambientScale = 1.0f
+    private var nightFactor = 0.0f
 
     fun postAction(action: (GameWorldPhysics) -> Unit) {
         commandQueue.offer { action(physics) }
@@ -135,13 +170,27 @@ class HypercarGlRenderer(
         instWorldU = WorldUniforms(instancedWorldProg)
         uShadowLightMvp = GLES30.glGetUniformLocation(shadowProg, "uLightMvp")
         uInstShadowLightVp = GLES30.glGetUniformLocation(instancedShadowProg, "uLightVp")
+
         uSkyViewProj = GLES30.glGetUniformLocation(skyProg, "uViewProj")
         uSkySunDir = GLES30.glGetUniformLocation(skyProg, "uSunDir")
+        uSkyHorizon = GLES30.glGetUniformLocation(skyProg, "uSkyHorizon")
+        uSkyMid = GLES30.glGetUniformLocation(skyProg, "uSkyMid")
+        uSkyZenith = GLES30.glGetUniformLocation(skyProg, "uSkyZenith")
+        uSkySunCol = GLES30.glGetUniformLocation(skyProg, "uSunCol")
+        uSkyNight = GLES30.glGetUniformLocation(skyProg, "uNightFactor")
+
         uOceanWaterTex = GLES30.glGetUniformLocation(oceanProg, "uWaterTex")
         uOceanViewProj = GLES30.glGetUniformLocation(oceanProg, "uViewProj")
         uOceanCamPos = GLES30.glGetUniformLocation(oceanProg, "uCamPos")
         uOceanSunDir = GLES30.glGetUniformLocation(oceanProg, "uSunDir")
+        uOceanSkyHorizon = GLES30.glGetUniformLocation(oceanProg, "uSkyHorizon")
+        uOceanSkyZenith = GLES30.glGetUniformLocation(oceanProg, "uSkyZenith")
+        uOceanSunCol = GLES30.glGetUniformLocation(oceanProg, "uSunCol")
+        uOceanFogCol = GLES30.glGetUniformLocation(oceanProg, "uFogColor")
+        uOceanFogDensity = GLES30.glGetUniformLocation(oceanProg, "uFogDensity")
+        uOceanNight = GLES30.glGetUniformLocation(oceanProg, "uNightFactor")
         uOceanTime = GLES30.glGetUniformLocation(oceanProg, "uTime")
+
         uParticleViewProj = GLES30.glGetUniformLocation(particleProg, "uViewProj")
 
         initShadowFbo()
@@ -157,13 +206,59 @@ class HypercarGlRenderer(
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         viewWidth = width.coerceAtLeast(1)
         viewHeight = height.coerceAtLeast(1)
+        sceneW = 0
+        sceneH = 0
         GLES30.glViewport(0, 0, viewWidth, viewHeight)
+    }
+
+    private fun updateAtmosphereUniforms() {
+        when (physics.timeOfDay) {
+            TimeOfDay.SUNSET -> {
+                sunDir[0] = -0.62f; sunDir[1] = 0.34f; sunDir[2] = 0.70f
+                skyHorizon[0] = 1.0f; skyHorizon[1] = 0.54f; skyHorizon[2] = 0.24f
+                skyMid[0] = 0.46f; skyMid[1] = 0.23f; skyMid[2] = 0.42f
+                skyZenith[0] = 0.05f; skyZenith[1] = 0.09f; skyZenith[2] = 0.24f
+                sunCol[0] = 1.45f; sunCol[1] = 1.13f; sunCol[2] = 0.72f
+                fogCol[0] = 0.95f; fogCol[1] = 0.56f; fogCol[2] = 0.34f
+                ambientScale = 1.0f
+                nightFactor = 0.0f
+            }
+            TimeOfDay.DAY -> {
+                sunDir[0] = -0.35f; sunDir[1] = 0.82f; sunDir[2] = 0.45f
+                skyHorizon[0] = 0.68f; skyHorizon[1] = 0.86f; skyHorizon[2] = 0.98f
+                skyMid[0] = 0.32f; skyMid[1] = 0.64f; skyMid[2] = 0.94f
+                skyZenith[0] = 0.12f; skyZenith[1] = 0.38f; skyZenith[2] = 0.78f
+                sunCol[0] = 1.55f; sunCol[1] = 1.50f; sunCol[2] = 1.40f
+                fogCol[0] = 0.72f; fogCol[1] = 0.86f; fogCol[2] = 0.96f
+                ambientScale = 1.30f
+                nightFactor = 0.0f
+            }
+            TimeOfDay.NIGHT -> {
+                sunDir[0] = 0.40f; sunDir[1] = 0.52f; sunDir[2] = -0.75f
+                skyHorizon[0] = 0.06f; skyHorizon[1] = 0.08f; skyHorizon[2] = 0.19f
+                skyMid[0] = 0.03f; skyMid[1] = 0.05f; skyMid[2] = 0.13f
+                skyZenith[0] = 0.01f; skyZenith[1] = 0.02f; skyZenith[2] = 0.06f
+                sunCol[0] = 0.35f; sunCol[1] = 0.45f; sunCol[2] = 0.72f
+                fogCol[0] = 0.04f; fogCol[1] = 0.06f; fogCol[2] = 0.15f
+                ambientScale = 0.52f
+                nightFactor = 1.0f
+            }
+        }
     }
 
     override fun onDrawFrame(gl: GL10?) {
         val now = System.nanoTime()
-        val dt = ((now - lastFrameNanos) / 1_000_000_000f).coerceIn(0.001f, 0.045f)
+        val rawDt = ((now - lastFrameNanos) / 1_000_000_000f).coerceIn(0.0005f, 0.25f)
+        val dt = rawDt.coerceIn(0.001f, 0.045f)
         lastFrameNanos = now
+
+        fpsFrameCount++
+        fpsTimerAccum += rawDt
+        if (fpsTimerAccum >= 0.5f) {
+            physics.fps = (fpsFrameCount / fpsTimerAccum).toInt().coerceIn(1, 240)
+            fpsFrameCount = 0
+            fpsTimerAccum = 0f
+        }
 
         while (true) {
             val cmd = commandQueue.poll() ?: break
@@ -179,15 +274,32 @@ class HypercarGlRenderer(
             onTelemetryUpdate(telemetry)
         }
 
-        renderShadowPass()
+        updateAtmosphereUniforms()
+        val gfx = physics.settings.graphicsPreset
+        if (gfx.shadowsEnabled && physics.timeOfDay != TimeOfDay.NIGHT) {
+            ensureShadowResolution(gfx.shadowRes)
+            renderShadowPass()
+        }
 
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-        GLES30.glViewport(0, 0, viewWidth, viewHeight)
-        GLES30.glClearColor(0.10f, 0.12f, 0.22f, 1f)
+        val resPreset = physics.settings.resolutionPreset
+        val useOffscreen = !resPreset.useNativeBuffer
+        if (useOffscreen) {
+            val targetW = (viewWidth * resPreset.scale).toInt().coerceAtLeast(320)
+            val targetH = (viewHeight * resPreset.scale).toInt().coerceAtLeast(180)
+            ensureSceneFbo(targetW, targetH)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneFbo)
+            GLES30.glViewport(0, 0, sceneW, sceneH)
+        } else {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            GLES30.glViewport(0, 0, viewWidth, viewHeight)
+        }
+
+        GLES30.glClearColor(fogCol[0], fogCol[1], fogCol[2], 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
 
         val aspect = viewWidth.toFloat() / viewHeight.toFloat()
-        Matrix.perspectiveM(projMat, 0, physics.cameraFov, aspect, 0.35f, 850f)
+        val farPlane = gfx.drawDistance.coerceAtLeast(1200f)
+        Matrix.perspectiveM(projMat, 0, physics.cameraFov, aspect, 0.35f, farPlane)
         Matrix.setLookAtM(
             viewMat, 0,
             physics.camPosX, physics.camPosY, physics.camPosZ,
@@ -196,28 +308,40 @@ class HypercarGlRenderer(
         )
         Matrix.multiplyMM(viewProjMat, 0, projMat, 0, viewMat, 0)
 
+        val brakingNow = physics.gameState == GameState.PLAYING && (input.brake || input.handbrake)
         renderSkyDome()
         renderOcean()
         renderWorldAndCar(
-            braking = input.brake || input.handbrake,
+            braking = brakingNow,
             reversing = telemetry.isReversing
         )
-        renderSkidsSmokeAndHalos(braking = input.brake || input.handbrake)
+        renderDynamicEffects(braking = brakingNow)
+
+        if (useOffscreen && sceneFbo != 0) {
+            GLES30.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, sceneFbo)
+            GLES30.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, 0)
+            GLES30.glBlitFramebuffer(
+                0, 0, sceneW, sceneH,
+                0, 0, viewWidth, viewHeight,
+                GLES30.GL_COLOR_BUFFER_BIT, GLES30.GL_LINEAR
+            )
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        }
     }
 
     private fun renderShadowPass() {
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, shadowFbo)
-        GLES30.glViewport(0, 0, shadowRes, shadowRes)
+        GLES30.glViewport(0, 0, currentShadowRes, currentShadowRes)
         GLES30.glColorMask(false, false, false, false)
         GLES30.glClear(GLES30.GL_DEPTH_BUFFER_BIT)
 
         val cx = physics.carX
         val cz = physics.carZ
-        Matrix.orthoM(lightProjMat, 0, -90f, 90f, -90f, 90f, 10f, 250f)
+        Matrix.orthoM(lightProjMat, 0, -110f, 110f, -110f, 110f, 10f, 300f)
         Matrix.setLookAtM(
             lightViewMat, 0,
-            cx + sunDir[0] * 120f, sunDir[1] * 120f + 20f, cz + sunDir[2] * 120f,
-            cx, 0f, cz,
+            cx + sunDir[0] * 140f, sunDir[1] * 140f + 25f, cz + sunDir[2] * 140f,
+            cx, physics.carY, cz,
             0f, 1f, 0f
         )
         Matrix.multiplyMM(lightVpMat, 0, lightProjMat, 0, lightViewMat, 0)
@@ -235,6 +359,7 @@ class HypercarGlRenderer(
 
         GLES30.glUseProgram(instancedShadowProg)
         GLES30.glUniformMatrix4fv(uInstShadowLightVp, 1, false, lightVpMat, 0)
+        worldMeshes.buildingInstanced.drawInstanced()
         worldMeshes.palmInstanced.drawInstanced()
         worldMeshes.lampInstanced.drawInstanced()
         worldMeshes.barrierInstanced.drawInstanced()
@@ -253,6 +378,11 @@ class HypercarGlRenderer(
 
         GLES30.glUniformMatrix4fv(uSkyViewProj, 1, false, skyViewProjMat, 0)
         GLES30.glUniform3fv(uSkySunDir, 1, sunDir, 0)
+        GLES30.glUniform3fv(uSkyHorizon, 1, skyHorizon, 0)
+        GLES30.glUniform3fv(uSkyMid, 1, skyMid, 0)
+        GLES30.glUniform3fv(uSkyZenith, 1, skyZenith, 0)
+        GLES30.glUniform3fv(uSkySunCol, 1, sunCol, 0)
+        GLES30.glUniform1f(uSkyNight, nightFactor)
         worldMeshes.skyDomeMesh.draw()
 
         GLES30.glEnable(GLES30.GL_CULL_FACE)
@@ -268,6 +398,12 @@ class HypercarGlRenderer(
         GLES30.glUniformMatrix4fv(uOceanViewProj, 1, false, viewProjMat, 0)
         GLES30.glUniform3f(uOceanCamPos, physics.camPosX, physics.camPosY, physics.camPosZ)
         GLES30.glUniform3fv(uOceanSunDir, 1, sunDir, 0)
+        GLES30.glUniform3fv(uOceanSkyHorizon, 1, skyHorizon, 0)
+        GLES30.glUniform3fv(uOceanSkyZenith, 1, skyZenith, 0)
+        GLES30.glUniform3fv(uOceanSunCol, 1, sunCol, 0)
+        GLES30.glUniform3fv(uOceanFogCol, 1, fogCol, 0)
+        GLES30.glUniform1f(uOceanFogDensity, physics.settings.graphicsPreset.fogDensity)
+        GLES30.glUniform1f(uOceanNight, nightFactor)
         GLES30.glUniform1f(uOceanTime, physics.worldTime)
         worldMeshes.oceanMesh.draw()
     }
@@ -296,6 +432,24 @@ class HypercarGlRenderer(
         GLES30.glUniform3fv(u.uSunDir, 1, sunDir, 0)
         GLES30.glUniform1f(u.uTime, physics.worldTime)
 
+        val gfx = physics.settings.graphicsPreset
+        val shadowsOn = gfx.shadowsEnabled && physics.timeOfDay != TimeOfDay.NIGHT
+        val headlightsOn = physics.timeOfDay == TimeOfDay.NIGHT && gfx.headlightsAllowed && physics.gameState != GameState.PAUSED
+
+        GLES30.glUniform3fv(u.uSkyHorizon, 1, skyHorizon, 0)
+        GLES30.glUniform3fv(u.uSkyZenith, 1, skyZenith, 0)
+        GLES30.glUniform3fv(u.uSunCol, 1, sunCol, 0)
+        GLES30.glUniform3fv(u.uFogColor, 1, fogCol, 0)
+        GLES30.glUniform1f(u.uFogDensity, gfx.fogDensity)
+        GLES30.glUniform1f(u.uShadowEnabled, if (shadowsOn) 1f else 0f)
+        GLES30.glUniform1f(u.uShadowTexel, 1.0f / currentShadowRes.toFloat())
+        GLES30.glUniform1f(u.uReflectionsEnabled, if (gfx.reflectionsEnabled) 1f else 0f)
+        GLES30.glUniform1f(u.uAmbientScale, ambientScale)
+        GLES30.glUniform1f(u.uNightFactor, nightFactor)
+        GLES30.glUniform3f(u.uCarPos, physics.carX, physics.carY, physics.carZ)
+        GLES30.glUniform3f(u.uCarFwd, sin(physics.yaw), 0f, cos(physics.yaw))
+        GLES30.glUniform1f(u.uHeadlightOn, if (headlightsOn) 1f else 0f)
+
         val paint = LUXURY_PAINT_PRESETS[physics.paintIndex.coerceIn(LUXURY_PAINT_PRESETS.indices)]
         val finish = physics.paintFinish
         GLES30.glUniform3f(u.uPaintColor, paint.r, paint.g, paint.b)
@@ -323,7 +477,11 @@ class HypercarGlRenderer(
         GLES30.glUniformMatrix4fv(worldU.uModel, 1, false, modelMat, 0)
         carSet.bodyMesh.draw()
 
-        if (physics.carType.hasBackfireFlames && (physics.backfireTimer > 0f || physics.boostTimer > 0f)) {
+        if (physics.isNitroActive) {
+            GLES30.glDisable(GLES30.GL_CULL_FACE)
+            carSet.nitroFlameMesh.draw()
+            GLES30.glEnable(GLES30.GL_CULL_FACE)
+        } else if (physics.carType.hasBackfireFlames && (physics.backfireTimer > 0f || physics.boostTimer > 0f)) {
             GLES30.glDisable(GLES30.GL_CULL_FACE)
             carSet.flameMesh?.draw()
             GLES30.glEnable(GLES30.GL_CULL_FACE)
@@ -357,9 +515,18 @@ class HypercarGlRenderer(
 
         bindWorldCommonUniforms(instancedWorldProg, instWorldU, braking, reversing)
         GLES30.glUniformMatrix4fv(instWorldU.uLightVp, 1, false, lightVpMat, 0)
+        worldMeshes.buildingInstanced.drawInstanced()
         worldMeshes.palmInstanced.drawInstanced()
         worldMeshes.lampInstanced.drawInstanced()
         worldMeshes.barrierInstanced.drawInstanced()
+        worldMeshes.yachtInstanced.drawInstanced()
+        worldMeshes.canyonRockInstanced.drawInstanced()
+        worldMeshes.billboardInstanced.drawInstanced()
+        worldMeshes.speedTrapInstanced.drawInstanced()
+
+        GLES30.glDisable(GLES30.GL_CULL_FACE)
+        worldMeshes.boostRingInstanced.drawInstanced()
+        GLES30.glEnable(GLES30.GL_CULL_FACE)
     }
 
     private fun buildCarBodyMatrix(out: FloatArray) {
@@ -373,7 +540,7 @@ class HypercarGlRenderer(
         Matrix.rotateM(out, 0, -rollDeg, 0f, 0f, 1f)
     }
 
-    private fun renderSkidsSmokeAndHalos(braking: Boolean) {
+    private fun renderDynamicEffects(braking: Boolean) {
         val camDx = physics.camPosX - physics.carX
         val camDz = physics.camPosZ - physics.carZ
         val camLen = hypot(camDx, camDz).coerceAtLeast(0.001f)
@@ -387,8 +554,8 @@ class HypercarGlRenderer(
             val dx = s.x2 - s.x1
             val dz = s.z2 - s.z1
             val len = hypot(dx, dz).coerceAtLeast(0.001f)
-            val nx = (-dz / len) * 0.17f
-            val nz = (dx / len) * 0.17f
+            val nx = (-dz / len) * 0.18f
+            val nz = (dx / len) * 0.18f
             val alpha = (s.life * 0.58f).coerceIn(0f, 0.62f)
             floatCount = pushQuad(
                 floatCount,
@@ -429,36 +596,38 @@ class HypercarGlRenderer(
             drawDynamicBatch(floatCount)
         }
 
-        var haloCount = 0
+        // Additive glow batch: Headlight/tail-light halos, night light trails, wall-scrape sparks
+        var glowCount = 0
         val fwdX = sin(physics.yaw)
         val fwdZ = cos(physics.yaw)
         val carRightX = cos(physics.yaw)
         val carRightZ = -sin(physics.yaw)
         val bodyY = physics.carY + physics.suspensionY
 
+        val headAlpha = if (physics.timeOfDay == TimeOfDay.NIGHT) 0.56f else 0.34f
+        val headSize = if (physics.timeOfDay == TimeOfDay.NIGHT) 0.82f else 0.55f
         for (side in floatArrayOf(-0.68f, 0.68f)) {
             val hx = physics.carX + fwdX * 2.34f + carRightX * side
             val hy = bodyY + 0.52f
             val hz = physics.carZ + fwdZ * 2.34f + carRightZ * side
-            val hs = 0.55f
-            haloCount = pushQuad(
-                haloCount,
-                hx - rightX * hs, hy - hs, hz - rightZ * hs,
-                hx + rightX * hs, hy - hs, hz + rightZ * hs,
-                hx + rightX * hs, hy + hs, hz + rightZ * hs,
-                hx - rightX * hs, hy + hs, hz - rightZ * hs,
-                0.78f, 0.94f, 1.0f, 0.34f,
+            glowCount = pushQuad(
+                glowCount,
+                hx - rightX * headSize, hy - headSize, hz - rightZ * headSize,
+                hx + rightX * headSize, hy - headSize, hz + rightZ * headSize,
+                hx + rightX * headSize, hy + headSize, hz + rightZ * headSize,
+                hx - rightX * headSize, hy + headSize, hz - rightZ * headSize,
+                0.78f, 0.94f, 1.0f, headAlpha,
                 solid = false
             )
         }
-        val tailAlpha = if (braking) 0.55f else 0.22f
-        val tailSize = if (braking) 0.72f else 0.45f
+        val tailAlpha = if (braking) 0.62f else if (physics.timeOfDay == TimeOfDay.NIGHT) 0.38f else 0.22f
+        val tailSize = if (braking) 0.78f else 0.48f
         for (side in floatArrayOf(-0.60f, 0.60f)) {
             val tx = physics.carX - fwdX * 2.38f + carRightX * side
             val ty = bodyY + 0.68f
             val tz = physics.carZ - fwdZ * 2.38f + carRightZ * side
-            haloCount = pushQuad(
-                haloCount,
+            glowCount = pushQuad(
+                glowCount,
                 tx - rightX * tailSize, ty - tailSize, tz - rightZ * tailSize,
                 tx + rightX * tailSize, ty - tailSize, tz + rightZ * tailSize,
                 tx + rightX * tailSize, ty + tailSize, tz + rightZ * tailSize,
@@ -468,9 +637,42 @@ class HypercarGlRenderer(
             )
         }
 
-        if (haloCount > 0) {
+        // Glowing red night tail-light trails
+        for (t in physics.tailTrails) {
+            if (!t.active) continue
+            if (glowCount + 6 * 9 > maxDynFloats) break
+            val w = 0.08f
+            glowCount = pushQuad(
+                glowCount,
+                t.x1, t.y1 - w, t.z1,
+                t.x2, t.y2 - w, t.z2,
+                t.x2, t.y2 + w, t.z2,
+                t.x1, t.y1 + w, t.z1,
+                1.0f, 0.10f, 0.14f, t.life * 0.72f,
+                solid = true
+            )
+        }
+
+        // Glowing orange wall-slide sparks
+        for (sp in physics.sparkParticles) {
+            if (!sp.active) continue
+            if (glowCount + 6 * 9 > maxDynFloats) break
+            val life = 1f - (sp.age / sp.maxAge).coerceIn(0f, 1f)
+            val hs = 0.24f
+            glowCount = pushQuad(
+                glowCount,
+                sp.x - rightX * hs, sp.y - hs, sp.z - rightZ * hs,
+                sp.x + rightX * hs, sp.y - hs, sp.z + rightZ * hs,
+                sp.x + rightX * hs, sp.y + hs, sp.z + rightZ * hs,
+                sp.x - rightX * hs, sp.y + hs, sp.z - rightZ * hs,
+                1.0f, 0.62f, 0.14f, life * 0.95f,
+                solid = false
+            )
+        }
+
+        if (glowCount > 0) {
             GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE)
-            drawDynamicBatch(haloCount)
+            drawDynamicBatch(glowCount)
         }
 
         GLES30.glEnable(GLES30.GL_CULL_FACE)
@@ -532,7 +734,7 @@ class HypercarGlRenderer(
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, shadowDepthTex)
         GLES30.glTexImage2D(
             GLES30.GL_TEXTURE_2D, 0, GLES30.GL_DEPTH_COMPONENT24,
-            shadowRes, shadowRes, 0, GLES30.GL_DEPTH_COMPONENT, GLES30.GL_UNSIGNED_INT, null
+            currentShadowRes, currentShadowRes, 0, GLES30.GL_DEPTH_COMPONENT, GLES30.GL_UNSIGNED_INT, null
         )
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
@@ -545,6 +747,56 @@ class HypercarGlRenderer(
         )
         GLES30.glDrawBuffers(1, intArrayOf(GLES30.GL_NONE), 0)
         GLES30.glReadBuffer(GLES30.GL_NONE)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+    }
+
+    private fun ensureShadowResolution(targetRes: Int) {
+        if (targetRes == currentShadowRes || shadowDepthTex == 0) return
+        currentShadowRes = targetRes
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, shadowDepthTex)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D, 0, GLES30.GL_DEPTH_COMPONENT24,
+            currentShadowRes, currentShadowRes, 0, GLES30.GL_DEPTH_COMPONENT, GLES30.GL_UNSIGNED_INT, null
+        )
+    }
+
+    private fun ensureSceneFbo(targetW: Int, targetH: Int) {
+        if (sceneFbo != 0 && sceneW == targetW && sceneH == targetH) return
+        sceneW = targetW
+        sceneH = targetH
+
+        if (sceneFbo == 0) {
+            val fbos = IntArray(1)
+            val texs = IntArray(1)
+            val rbos = IntArray(1)
+            GLES30.glGenFramebuffers(1, fbos, 0)
+            GLES30.glGenTextures(1, texs, 0)
+            GLES30.glGenRenderbuffers(1, rbos, 0)
+            sceneFbo = fbos[0]
+            sceneColorTex = texs[0]
+            sceneDepthRbo = rbos[0]
+        }
+
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sceneColorTex)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA8,
+            sceneW, sceneH, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null
+        )
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        GLES30.glBindRenderbuffer(GLES30.GL_RENDERBUFFER, sceneDepthRbo)
+        GLES30.glRenderbufferStorage(GLES30.GL_RENDERBUFFER, GLES30.GL_DEPTH_COMPONENT24, sceneW, sceneH)
+
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneFbo)
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, sceneColorTex, 0
+        )
+        GLES30.glFramebufferRenderbuffer(
+            GLES30.GL_FRAMEBUFFER, GLES30.GL_DEPTH_ATTACHMENT, GLES30.GL_RENDERBUFFER, sceneDepthRbo
+        )
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
     }
 

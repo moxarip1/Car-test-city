@@ -6,13 +6,15 @@ class CarMeshSet(
     val bodyMesh: GpuMesh,
     val wheelMesh: GpuMesh,
     val caliperMesh: GpuMesh,
-    val flameMesh: GpuMesh?
+    val flameMesh: GpuMesh?,
+    val nitroFlameMesh: GpuMesh
 ) {
     fun release() {
         bodyMesh.release()
         wheelMesh.release()
         caliperMesh.release()
         flameMesh?.release()
+        nitroFlameMesh.release()
     }
 }
 
@@ -25,7 +27,6 @@ object CarMeshLibrary {
     )
 
     private fun addWheelArchFlares(b: MeshBuilder) {
-        // Sculpted carbon-composite arch eyebrows framing all 4 wheel wells
         for (zPos in floatArrayOf(1.44f, -1.38f)) {
             for (side in floatArrayOf(-1f, 1f)) {
                 val xArch = side * 1.01f
@@ -38,10 +39,28 @@ object CarMeshLibrary {
 
     private fun buildCaliperMesh(): GpuMesh {
         val cb = MeshBuilder(1024)
-        // Metallic brake rotor disc (matType = 3) + painted brake caliper housing (matType = 11)
         cb.addBox(0f, 0f, 0f, 0.06f, 0.42f, 0.42f, 0.62f, 0.65f, 0.70f, 3f)
         cb.addBox(0f, 0.08f, -0.15f, 0.12f, 0.18f, 0.16f, 1f, 1f, 1f, 11f)
         return cb.build()
+    }
+
+    private fun buildTwinBlueNitroMesh(startZ: Float): GpuMesh {
+        val nb = MeshBuilder(1024)
+        for (exX in floatArrayOf(-0.28f, 0.28f)) {
+            nb.addTriangle(
+                exX - 0.12f, 0.34f, startZ, 0f, 0f,
+                exX + 0.12f, 0.34f, startZ, 1f, 0f,
+                exX, 0.34f, startZ - 1.35f, 0.5f, 1f,
+                0.05f, 0.85f, 1.0f, 4f
+            )
+            nb.addTriangle(
+                exX, 0.22f, startZ, 0f, 0f,
+                exX, 0.46f, startZ, 1f, 0f,
+                exX, 0.34f, startZ - 1.35f, 0.5f, 1f,
+                0.28f, 0.96f, 1.0f, 4f
+            )
+        }
+        return nb.build()
     }
 
     private fun buildEvHyperGt(): CarMeshSet {
@@ -67,27 +86,22 @@ object CarMeshLibrary {
 
         addWheelArchFlares(b)
 
-        // Carbon fiber splitter, skirts & diffuser
         b.addBox(0f, 0.18f, 2.26f, 1.98f, 0.07f, 0.48f, 0.09f, 0.10f, 0.12f, 0f)
         b.addBox(-0.98f, 0.20f, 0f, 0.14f, 0.08f, 2.35f, 0.09f, 0.10f, 0.12f, 0f)
         b.addBox(0.98f, 0.20f, 0f, 0.14f, 0.08f, 2.35f, 0.09f, 0.10f, 0.12f, 0f)
         b.addBox(0f, 0.24f, -2.28f, 1.72f, 0.18f, 0.24f, 0.08f, 0.09f, 0.11f, 0f)
 
-        // Active rear spoiler
         b.addBox(-0.48f, 0.95f, -2.08f, 0.07f, 0.28f, 0.24f, 0.10f, 0.11f, 0.14f, 0f)
         b.addBox(0.48f, 0.95f, -2.08f, 0.07f, 0.28f, 0.24f, 0.10f, 0.11f, 0.14f, 0f)
         b.addBox(0f, 1.10f, -2.14f, 1.92f, 0.06f, 0.34f, 0.12f, 0.14f, 0.18f, 6f)
 
-        // Cyan LED accent blades (matType = 8)
         b.addBox(0f, 0.44f, 2.34f, 1.48f, 0.055f, 0.08f, 0f, 0.95f, 1f, 8f)
         b.addBox(-1.02f, 0.24f, 0f, 0.04f, 0.04f, 1.9f, 0f, 0.95f, 1f, 8f)
         b.addBox(1.02f, 0.24f, 0f, 0.04f, 0.04f, 1.9f, 0f, 0.95f, 1f, 8f)
 
-        // Front headlight LEDs (matType = 4)
         b.addBox(-0.68f, 0.50f, 2.24f, 0.38f, 0.06f, 0.14f, 0.88f, 0.98f, 1.0f, 4f)
         b.addBox(0.68f, 0.50f, 2.24f, 0.38f, 0.06f, 0.14f, 0.88f, 0.98f, 1.0f, 4f)
 
-        // Full-width reactive brake light bar (matType = 7) & reverse lights (matType = 9)
         b.addBox(0f, 0.68f, -2.33f, 1.66f, 0.085f, 0.07f, 1f, 0.1f, 0.1f, 7f)
         b.addBox(-0.46f, 0.56f, -2.33f, 0.26f, 0.055f, 0.07f, 1f, 1f, 1f, 9f)
         b.addBox(0.46f, 0.56f, -2.33f, 0.26f, 0.055f, 0.07f, 1f, 1f, 1f, 9f)
@@ -95,7 +109,7 @@ object CarMeshLibrary {
         val wb = MeshBuilder(4096)
         wb.addWheelX(radius = 0.36f, width = 0.30f, rimR = 0.72f, rimG = 0.94f, rimB = 1.0f)
 
-        return CarMeshSet(b.build(), wb.build(), buildCaliperMesh(), null)
+        return CarMeshSet(b.build(), wb.build(), buildCaliperMesh(), null, buildTwinBlueNitroMesh(-2.36f))
     }
 
     private fun buildV12ApexRoadster(): CarMeshSet {
@@ -128,7 +142,6 @@ object CarMeshLibrary {
         b.addBox(-1.04f, 0.36f, -0.30f, 0.16f, 0.32f, 1.10f, 0.09f, 0.09f, 0.11f, 0f)
         b.addBox(1.04f, 0.36f, -0.30f, 0.16f, 0.32f, 1.10f, 0.09f, 0.09f, 0.11f, 0f)
 
-        // Swan-neck high GT carbon rear wing
         b.addBox(-0.56f, 1.06f, -2.14f, 0.07f, 0.42f, 0.26f, 0.10f, 0.10f, 0.12f, 0f)
         b.addBox(0.56f, 1.06f, -2.14f, 0.07f, 0.42f, 0.26f, 0.10f, 0.10f, 0.12f, 0f)
         b.addBox(0f, 1.28f, -2.22f, 2.12f, 0.07f, 0.38f, 0.10f, 0.10f, 0.12f, 0f)
@@ -153,7 +166,7 @@ object CarMeshLibrary {
             fb.addTriangle(exX, 0.25f, -2.44f, 0f, 0f, exX, 0.43f, -2.44f, 1f, 0f, exX, 0.34f, -3.28f, 0.5f, 1f, 0.45f, 0.85f, 1.0f, 4f)
         }
 
-        return CarMeshSet(b.build(), wb.build(), buildCaliperMesh(), fb.build())
+        return CarMeshSet(b.build(), wb.build(), buildCaliperMesh(), fb.build(), buildTwinBlueNitroMesh(-2.46f))
     }
 
     private fun buildVipExecutiveCoupe(): CarMeshSet {
@@ -194,7 +207,7 @@ object CarMeshLibrary {
         val wb = MeshBuilder(4096)
         wb.addWheelX(radius = 0.36f, width = 0.29f, rimR = 0.96f, rimG = 0.78f, rimB = 0.32f)
 
-        return CarMeshSet(b.build(), wb.build(), buildCaliperMesh(), null)
+        return CarMeshSet(b.build(), wb.build(), buildCaliperMesh(), null, buildTwinBlueNitroMesh(-2.46f))
     }
 
     private fun octProfile(halfW: Float, yBottom: Float, yTop: Float): List<Pair<Float, Float>> {
