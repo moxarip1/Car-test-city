@@ -1,0 +1,6 @@
+{
+  "name": "Hypercar Resort",
+  "description": "60 FPS 3D open-world luxury hypercar driving and stunt game with procedural supercars, coastal city, boost tunnel, and Arabic RTL HUD.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

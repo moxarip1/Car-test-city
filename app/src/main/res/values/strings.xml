@@ -1,0 +1,29 @@
+<resources>
+    <string name="app_name">Hypercar Resort</string>
+    <string name="speed_unit_kmh">كم/س</string>
+    <string name="drift_score_label">نقاط الانجراف</string>
+    <string name="total_score_label">المجموع</string>
+    <string name="car_ev_hyper_gt">EV Hyper-GT</string>
+    <string name="car_v12_apex">V12 Apex</string>
+    <string name="car_vip_coupe">VIP Coupe</string>
+    <string name="finish_glossy">لامع</string>
+    <string name="finish_matte">مطفي</string>
+    <string name="finish_chrome">كروم</string>
+    <string name="cam_chase">مطاردة</string>
+    <string name="cam_side">جانبية</string>
+    <string name="cam_hood">الغطاء</string>
+    <string name="cam_orbit">مدار</string>
+    <string name="action_reset_car">إعادة</string>
+    <string name="action_fullscreen">ملء الشاشة</string>
+    <string name="action_exit_fullscreen">خروج من الملء</string>
+    <string name="action_mute">كتم الصوت</string>
+    <string name="action_unmute">تشغيل الصوت</string>
+    <string name="pedal_gas">تسارع</string>
+    <string name="pedal_brake">فرامل</string>
+    <string name="pedal_drift">انجراف</string>
+    <string name="steer_left_desc">انعطاف لليسار</string>
+    <string name="steer_right_desc">انعطاف لليمين</string>
+    <string name="stunt_airtime">قفزة جوية!</string>
+    <string name="stunt_helipad">هبوط المهبط +5000</string>
+    <string name="stunt_boost">نفق التوربو!</string>
+</resources>
